@@ -73,7 +73,7 @@ verify-manifests: ## Verify embedded manifests match config/module source
 .PHONY: helm-chart-sync
 helm-chart-sync: manifests kustomize yq ## Sync the Kustomize installation bundle into the Helm chart.
 	@mkdir -p charts/ray-module-operator/files
-	@"$(KUSTOMIZE)" build config/openshift | "$(YQ)" 'select(.kind != "Namespace" and .kind != "Deployment" and .kind != "SecurityContextConstraints") | with(select(.metadata.namespace != null); .metadata.namespace = "__OPERATOR_NAMESPACE__") | with(select(.subjects != null); (.subjects[] | select(.namespace != null) | .namespace) = "__OPERATOR_NAMESPACE__") | with(select(.data.namespace == "opendatahub"); .data.namespace = "__APPLICATION_NAMESPACE__")' > charts/ray-module-operator/files/resources.yaml
+	@"$(KUSTOMIZE)" build config/openshift | "$(YQ)" 'select(.kind != "Namespace" and .kind != "Deployment" and .kind != "SecurityContextConstraints") | with(select(.metadata.namespace != null); .metadata.namespace = "__OPERATOR_NAMESPACE__") | with(select(.subjects != null); (.subjects[] | select(.namespace != null) | .namespace) = "__OPERATOR_NAMESPACE__") | with(select(.data.namespace == "opendatahub"); .data.namespace = "__APPLICATION_NAMESPACE__") | with(select(.data."odh-ray-module-operator-image" != null); .data."odh-ray-module-operator-image" = "__OPERATOR_IMAGE__") | with(select(.data."odh-kuberay-operator-controller-image" != null); .data."odh-kuberay-operator-controller-image" = "__KUBERAY_OPERATOR_IMAGE__") | with(select(.data."odh-kube-rbac-proxy-image" != null); .data."odh-kube-rbac-proxy-image" = "__KUBE_RBAC_PROXY_IMAGE__")' > charts/ray-module-operator/files/resources.yaml
 
 .PHONY: helm-lint
 helm-lint: helm-chart-sync ## Validate the Ray module-controller Helm chart.
@@ -82,7 +82,7 @@ helm-lint: helm-chart-sync ## Validate the Ray module-controller Helm chart.
 .PHONY: helm-chart-sync-check
 helm-chart-sync-check: kustomize yq ## Verify the committed Helm bundle matches config/openshift.
 	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
-	"$(KUSTOMIZE)" build config/openshift | "$(YQ)" 'select(.kind != "Namespace" and .kind != "Deployment" and .kind != "SecurityContextConstraints") | with(select(.metadata.namespace != null); .metadata.namespace = "__OPERATOR_NAMESPACE__") | with(select(.subjects != null); (.subjects[] | select(.namespace != null) | .namespace) = "__OPERATOR_NAMESPACE__") | with(select(.data.namespace == "opendatahub"); .data.namespace = "__APPLICATION_NAMESPACE__")' > "$$tmp"; \
+	"$(KUSTOMIZE)" build config/openshift | "$(YQ)" 'select(.kind != "Namespace" and .kind != "Deployment" and .kind != "SecurityContextConstraints") | with(select(.metadata.namespace != null); .metadata.namespace = "__OPERATOR_NAMESPACE__") | with(select(.subjects != null); (.subjects[] | select(.namespace != null) | .namespace) = "__OPERATOR_NAMESPACE__") | with(select(.data.namespace == "opendatahub"); .data.namespace = "__APPLICATION_NAMESPACE__") | with(select(.data."odh-ray-module-operator-image" != null); .data."odh-ray-module-operator-image" = "__OPERATOR_IMAGE__") | with(select(.data."odh-kuberay-operator-controller-image" != null); .data."odh-kuberay-operator-controller-image" = "__KUBERAY_OPERATOR_IMAGE__") | with(select(.data."odh-kube-rbac-proxy-image" != null); .data."odh-kube-rbac-proxy-image" = "__KUBE_RBAC_PROXY_IMAGE__")' > "$$tmp"; \
 	diff -u charts/ray-module-operator/files/resources.yaml "$$tmp"
 
 .PHONY: generate
@@ -125,8 +125,12 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+	set +e; \
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v; \
+	status=$$?; \
+	set -e; \
+	$(MAKE) cleanup-test-e2e; \
+	exit $$status
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
