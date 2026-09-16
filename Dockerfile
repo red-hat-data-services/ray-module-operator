@@ -5,11 +5,16 @@ ARG BUILDPLATFORM
 ################################################################################
 FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/toolbox:9.6 AS manifests
 ARG ODH_PLATFORM_TYPE=OpenDataHub
-ENV ODH_PLATFORM_TYPE=${ODH_PLATFORM_TYPE}
 USER root
 WORKDIR /
-COPY hack/scripts/get-manifests.sh hack/scripts/get-manifests.sh
-RUN mkdir -p opt/manifests && ./hack/scripts/get-manifests.sh
+COPY opt/manifests /opt/manifests-source
+RUN case "${ODH_PLATFORM_TYPE}" in \
+      OpenDataHub|opendatahub|odh) platform=odh ;; \
+      *) platform=rhoai ;; \
+    esac && \
+    test -d "/opt/manifests-source/${platform}/kuberay" && \
+    mkdir -p /opt/manifests && \
+    cp -a "/opt/manifests-source/${platform}/kuberay" /opt/manifests/kuberay
 
 ################################################################################
 FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/go-toolset:$GOLANG_VERSION AS builder

@@ -18,8 +18,15 @@
 !go.mod
 !go.sum
 
+# Module-owned KubeRay snapshots. The Dockerfile selects the platform tree.
+!opt/
+!opt/manifests/
+!opt/manifests/odh/
+!opt/manifests/odh/kuberay/
+!opt/manifests/odh/kuberay/**
+!opt/manifests/rhoai/
+!opt/manifests/rhoai/kuberay/
+!opt/manifests/rhoai/kuberay/**
+
 # Re-include embedded manifests for go:embed
 !internal/controller/manifests/
-
-# Re-include manifest download script for Docker build stage
-!hack/scripts/get-manifests.sh

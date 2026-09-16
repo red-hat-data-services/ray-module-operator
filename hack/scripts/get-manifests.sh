@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
-# Follows ODH-operator /opt/manifests pattern (download at build, not committed).
+# KubeRay manifests are module-owned content. Committed snapshots live under
+# opt/manifests/{odh,rhoai}/kuberay; this script materializes the selected
+# snapshot at opt/manifests/kuberay for local tests and image builds.
+# Network fetching is explicit with USE_LOCAL=false.
 set -euo pipefail
 
 GITHUB_URL="https://github.com"
-DST_MANIFESTS_DIR="${DST_MANIFESTS_DIR:-./opt/manifests}"
+PLATFORM_MANIFEST_DIR="${ODH_PLATFORM_TYPE:-OpenDataHub}"
+if [[ "${PLATFORM_MANIFEST_DIR}" == "OpenDataHub" || "${PLATFORM_MANIFEST_DIR}" == "opendatahub" || "${PLATFORM_MANIFEST_DIR}" == "odh" ]]; then
+    PLATFORM_MANIFEST_DIR="odh"
+else
+    PLATFORM_MANIFEST_DIR="rhoai"
+fi
+LOCAL_MANIFESTS_ROOT="${LOCAL_MANIFESTS_ROOT:-./opt/manifests}"
+DST_MANIFESTS_DIR="${DST_MANIFESTS_DIR:-${LOCAL_MANIFESTS_ROOT}}"
+USE_LOCAL="${USE_LOCAL:-true}"
 
 # COMPONENT_MANIFESTS entries are in the format:
 #   "repo-org:repo-name:ref-name:source-folder"
@@ -18,20 +29,19 @@ declare -A ODH_COMPONENT_MANIFESTS=(
     ["kuberay"]="opendatahub-io:kuberay:dev@2ae7d5536dbac15287940606003151c2cd0819ad:ray-operator/config"
 )
 
-# FIXME: Bump to rhoai-3.6@<sha> once the GA branch is cut
 declare -A RHOAI_COMPONENT_MANIFESTS=(
-    ["kuberay"]="red-hat-data-services:kuberay:rhoai-3.5@d1972fbd2cb7efa5c8c4b527f5156a499cfb9173:ray-operator/config"
+    ["kuberay"]="red-hat-data-services:kuberay:main@3a7b762f61ff9606ec0da721ed59e3678e8ec59a:ray-operator/config"
 )
 
 # Select manifests based on platform type
-if [ "${ODH_PLATFORM_TYPE:-OpenDataHub}" = "OpenDataHub" ]; then
-    echo "Downloading manifests for ODH"
+if [[ "${ODH_PLATFORM_TYPE:-OpenDataHub}" == "OpenDataHub" || "${ODH_PLATFORM_TYPE:-OpenDataHub}" == "opendatahub" || "${ODH_PLATFORM_TYPE:-OpenDataHub}" == "odh" ]]; then
+    echo "Selecting manifests for ODH"
     declare -A COMPONENT_MANIFESTS=()
     for key in "${!ODH_COMPONENT_MANIFESTS[@]}"; do
         COMPONENT_MANIFESTS["$key"]="${ODH_COMPONENT_MANIFESTS[$key]}"
     done
 else
-    echo "Downloading manifests for RHOAI"
+    echo "Selecting manifests for RHOAI"
     declare -A COMPONENT_MANIFESTS=()
     for key in "${!RHOAI_COMPONENT_MANIFESTS[@]}"; do
         COMPONENT_MANIFESTS["$key"]="${RHOAI_COMPONENT_MANIFESTS[$key]}"
@@ -104,7 +114,7 @@ function git_fetch_ref()
 download_manifest() {
     local key=$1
     local repo_info=$2
-    echo -e "\033[32mDownloading \033[33m${key}\033[32m:\033[0m ${repo_info}"
+    echo -e "\033[32mPreparing \033[33m${key}\033[32m:\033[0m ${repo_info}"
     IFS=':' read -r -a parts <<< "${repo_info}"
 
     local repo_org="${parts[0]}"
@@ -115,12 +125,24 @@ download_manifest() {
     local repo_url="${GITHUB_URL}/${repo_org}/${repo_name}"
     local repo_dir="${TMP_DIR}/${key}"
 
-    # USE_LOCAL: copy from adjacent checkout instead of cloning (host-only, not used in Dockerfile)
-    if [[ "${USE_LOCAL:-}" == "true" ]] && [[ -e "../${repo_name}" ]]; then
+    if [[ "${USE_LOCAL}" == "true" ]]; then
+        local snapshot_dir="${LOCAL_MANIFESTS_ROOT}/${PLATFORM_MANIFEST_DIR}/${key}"
+        if [[ -d "${snapshot_dir}" ]]; then
+            echo "Copying committed ${PLATFORM_MANIFEST_DIR} snapshot ..."
+            rm -rf "${DST_MANIFESTS_DIR:?}/${key}"
+            mkdir -p "${DST_MANIFESTS_DIR}/${key}"
+            cp -a "${snapshot_dir}/." "${DST_MANIFESTS_DIR}/${key}/"
+            return
+        fi
+        if [[ ! -e "../${repo_name}/${source_path}" ]]; then
+            echo "ERROR: local manifest snapshot not found at '${snapshot_dir}'"
+            echo "       Run 'make update-manifests' from a connected environment"
+            return 1
+        fi
         echo "Copying from adjacent checkout ..."
         rm -rf "${DST_MANIFESTS_DIR:?}/${key}"
         mkdir -p "${DST_MANIFESTS_DIR}/${key}"
-        cp -rf "../${repo_name}/${source_path}"/* "${DST_MANIFESTS_DIR}/${key}"
+        cp -a "../${repo_name}/${source_path}/." "${DST_MANIFESTS_DIR}/${key}/"
         return
     fi
 
