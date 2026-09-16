@@ -19,8 +19,8 @@ go.work
 # Kubernetes Generated files - skip generated files, except for vendored files
 !vendor/**/zz_generated.*
 
-# Vendored operand manifests are downloaded at build time, not committed
-opt/manifests/
+# The selected runtime tree is generated from the committed platform snapshots.
+opt/manifests/kuberay/
 
 # editor and IDE paraphernalia
 .idea

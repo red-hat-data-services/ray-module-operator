@@ -42,6 +42,16 @@ make lint
 make docker-build IMG=quay.io/opendatahub/odh-ray-module-operator:latest
 ```
 
+### Operand manifests
+
+The Ray module owns the KubeRay operand manifests. Platform installation
+manifests contain only the module operator; the image carries the selected
+KubeRay snapshot under `/opt/manifests/kuberay`.
+
+Normal builds use the committed snapshots under `opt/manifests/{odh,rhoai}`.
+Run `make update-manifests` in a connected environment to refresh them from
+the pinned upstream KubeRay commits.
+
 ## License
 
 Copyright 2026.

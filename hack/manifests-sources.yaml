@@ -1,0 +1,13 @@
+# Provenance for the module-owned operand manifest snapshots.
+# Refresh with `make update-manifests` in a connected environment.
+components:
+  kuberay:
+    sourcePath: ray-operator/config
+    odh:
+      repository: https://github.com/opendatahub-io/kuberay
+      ref: dev@2ae7d5536dbac15287940606003151c2cd0819ad
+      snapshot: opt/manifests/odh/kuberay
+    rhoai:
+      repository: https://github.com/red-hat-data-services/kuberay
+      ref: main@3a7b762f61ff9606ec0da721ed59e3678e8ec59a
+      snapshot: opt/manifests/rhoai/kuberay
