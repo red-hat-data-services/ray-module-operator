@@ -9,6 +9,7 @@ require (
 	github.com/opendatahub-io/odh-platform-utilities v0.2.1-0.20260720154629-be3089052a47
 	github.com/opendatahub-io/odh-platform-utilities/framework v0.1.0
 	k8s.io/api v0.35.3
+	k8s.io/apiextensions-apiserver v0.35.2
 	k8s.io/apimachinery v0.35.4
 	k8s.io/client-go v0.35.3
 	sigs.k8s.io/controller-runtime v0.23.3
@@ -102,7 +103,7 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
@@ -122,7 +123,6 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	helm.sh/helm/v4 v4.1.1 // indirect
-	k8s.io/apiextensions-apiserver v0.35.2 // indirect
 	k8s.io/apiserver v0.35.2 // indirect
 	k8s.io/component-base v0.35.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
