@@ -26,12 +26,32 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/conditions"
+	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/reconciler"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/types"
 	componentsv1alpha1 "github.com/opendatahub-io/ray-module-operator/api/v1alpha1"
 	"github.com/opendatahub-io/ray-module-operator/internal/constants"
 )
+
+// newTestConditionsManager mirrors the aggregator configuration declared by
+// SetupWithManager so the status tests exercise the real condition set.
+func newTestConditionsManager(t *testing.T, ray *componentsv1alpha1.Ray) *conditions.Manager {
+	t.Helper()
+
+	aggregator, err := conditions.NewAggregator(
+		fwapi.ConditionTypeReady,
+		reconciler.DependentConditions(
+			fwapi.ConditionTypeProvisioningSucceeded,
+			constants.ConditionDeploymentsAvailable,
+		)...,
+	)
+	if err != nil {
+		t.Fatalf("conditions.NewAggregator: %v", err)
+	}
+
+	return conditions.NewManager(ray, aggregator)
+}
 
 func TestObservedGenerationAction(t *testing.T) {
 	ray := &componentsv1alpha1.Ray{
@@ -57,10 +77,7 @@ func TestDegradedAction(t *testing.T) {
 			Generation: 3,
 		},
 	}
-	mgr := conditions.NewManager(ray, "Ready",
-		string(common.ConditionTypeProvisioningSucceeded),
-		constants.ConditionDeploymentsAvailable,
-	)
+	mgr := newTestConditionsManager(t, ray)
 
 	rr := &types.ReconciliationRequest{Instance: ray, Conditions: mgr}
 	if err := degradedAction()(context.Background(), rr); err != nil {
@@ -86,11 +103,8 @@ func TestReadyIndependentOfDegraded(t *testing.T) {
 			Generation: 3,
 		},
 	}
-	mgr := conditions.NewManager(ray, "Ready",
-		string(common.ConditionTypeProvisioningSucceeded),
-		constants.ConditionDeploymentsAvailable,
-	)
-	mgr.MarkTrue(string(common.ConditionTypeProvisioningSucceeded))
+	mgr := newTestConditionsManager(t, ray)
+	mgr.MarkTrue(fwapi.ConditionTypeProvisioningSucceeded)
 	mgr.MarkTrue(constants.ConditionDeploymentsAvailable)
 
 	rr := &types.ReconciliationRequest{Instance: ray, Conditions: mgr}
@@ -101,7 +115,7 @@ func TestReadyIndependentOfDegraded(t *testing.T) {
 	if !mgr.IsHappy() {
 		t.Fatal("Ready should be True when ProvisioningSucceeded and DeploymentsAvailable are True; Degraded=False must not block Ready")
 	}
-	ready := mgr.GetCondition("Ready")
+	ready := mgr.GetCondition(fwapi.ConditionTypeReady)
 	if ready == nil || ready.Status != metav1.ConditionTrue {
 		t.Fatalf("Ready = %#v, want True", ready)
 	}
@@ -143,8 +157,8 @@ func TestDistributionActionStandaloneWhenConfigMapAbsent(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: constants.InstanceName},
 		Spec:       componentsv1alpha1.RaySpec{ApplicationsNamespace: "redhat-ods-applications"},
 		Status: componentsv1alpha1.RayStatus{
-			Status: common.Status{
-				Conditions: []common.Condition{{
+			Status: fwapi.Status{
+				Conditions: []fwapi.Condition{{
 					Type:   constants.ConditionDeploymentsAvailable,
 					Status: metav1.ConditionTrue,
 				}},
@@ -190,8 +204,8 @@ func TestDistributionActionFromConfigMap(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: constants.InstanceName},
 		Spec:       componentsv1alpha1.RaySpec{ApplicationsNamespace: "redhat-ods-applications"},
 		Status: componentsv1alpha1.RayStatus{
-			Status: common.Status{
-				Conditions: []common.Condition{{
+			Status: fwapi.Status{
+				Conditions: []fwapi.Condition{{
 					Type:   constants.ConditionDeploymentsAvailable,
 					Status: metav1.ConditionTrue,
 				}},
@@ -235,8 +249,8 @@ func TestDistributionActionSkipsInvalidVersion(t *testing.T) {
 		Spec:       componentsv1alpha1.RaySpec{ApplicationsNamespace: "redhat-ods-applications"},
 		Status: componentsv1alpha1.RayStatus{
 			Distribution: componentsv1alpha1.Distribution{Name: "kept", Version: "1.0.0"},
-			Status: common.Status{
-				Conditions: []common.Condition{{
+			Status: fwapi.Status{
+				Conditions: []fwapi.Condition{{
 					Type:   constants.ConditionDeploymentsAvailable,
 					Status: metav1.ConditionTrue,
 				}},
@@ -271,7 +285,7 @@ func TestPlatformReleaseActionAfterDeploymentsAvailable(t *testing.T) {
 			ApplicationsNamespace: "redhat-ods-applications",
 		},
 		Status: componentsv1alpha1.RayStatus{
-			Status: common.Status{Conditions: []common.Condition{{
+			Status: fwapi.Status{Conditions: []fwapi.Condition{{
 				Type:   constants.ConditionDeploymentsAvailable,
 				Status: metav1.ConditionTrue,
 			}}},

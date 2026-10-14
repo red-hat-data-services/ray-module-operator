@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -49,8 +50,8 @@ type Distribution struct {
 
 // RayStatus defines the observed state of the Ray module.
 type RayStatus struct {
-	common.Status                 `json:",inline"`
-	common.ComponentReleaseStatus `json:",inline"`
+	fwapi.Status                 `json:",inline"`
+	fwapi.ComponentReleaseStatus `json:",inline"`
 
 	// Distribution is the platform distribution context this module is aligned to.
 	// +optional
@@ -84,28 +85,24 @@ type RayList struct {
 	Items           []Ray `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&Ray{}, &RayList{})
-}
-
-func (r *Ray) GetStatus() *common.Status {
+func (r *Ray) GetStatus() *fwapi.Status {
 	return &r.Status.Status
 }
 
-func (r *Ray) GetConditions() []common.Condition {
+func (r *Ray) GetConditions() []fwapi.Condition {
 	return r.Status.Conditions
 }
 
-func (r *Ray) SetConditions(conditions []common.Condition) {
+func (r *Ray) SetConditions(conditions []fwapi.Condition) {
 	r.Status.Conditions = conditions
 }
 
-func (r *Ray) GetReleaseStatus() *common.ComponentReleaseStatus {
+func (r *Ray) GetReleaseStatus() *fwapi.ComponentReleaseStatus {
 	return &r.Status.ComponentReleaseStatus
 }
 
-func (r *Ray) SetReleaseStatus(status common.ComponentReleaseStatus) {
+func (r *Ray) SetReleaseStatus(status fwapi.ComponentReleaseStatus) {
 	r.Status.ComponentReleaseStatus = status
 }
 
-var _ common.PlatformObject = &Ray{}
+var _ fwapi.PlatformObject = &Ray{}

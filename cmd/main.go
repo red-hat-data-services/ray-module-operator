@@ -20,7 +20,9 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
+	"time"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
@@ -28,12 +30,18 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	tlspkg "github.com/opendatahub-io/odh-platform-utilities/framework/tls"
+	configv1 "github.com/openshift/api/config/v1"
+	commonTLS "github.com/openshift/controller-runtime-common/pkg/tls"
 
 	componentsv1alpha1 "github.com/opendatahub-io/ray-module-operator/api/v1alpha1"
 	"github.com/opendatahub-io/ray-module-operator/internal/constants"
@@ -48,6 +56,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
+	utilruntime.Must(configv1.AddToScheme(scheme)) // APIServer cluster TLS profile
 
 	utilruntime.Must(componentsv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
@@ -96,17 +105,84 @@ func parseFlags() managerConfig {
 	return cfg
 }
 
-func tlsOptions(enableHTTP2 bool) []func(*tls.Config) {
-	if enableHTTP2 {
-		return nil
+// managerTLSOptions resolves the OpenShift APIServer TLS security profile and
+// adherence policy and returns the TLS options for the metrics and webhook
+// servers, plus the load result used to register the profile watcher.
+//
+// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
+func managerTLSOptions(
+	ctx context.Context,
+	cli client.Reader,
+	enableHTTP2 bool,
+) ([]func(*tls.Config), tlspkg.LoadResult, error) {
+	result, err := tlspkg.LoadWithAdherence(ctx, cli)
+	if err != nil {
+		// Fail closed: refuse to start when the TLS posture cannot be determined.
+		return nil, result, fmt.Errorf("unable to load APIServer TLS profile: %w", err)
 	}
-	// Disable HTTP/2 to prevent HTTP/2 Stream Cancellation and Rapid Reset CVEs.
-	// See: https://github.com/advisories/GHSA-qppj-fm5r-hxr3
-	//      https://github.com/advisories/GHSA-4374-p667-p6c8
-	return []func(*tls.Config){
-		func(c *tls.Config) {
-			setupLog.Info("Disabling HTTP/2")
-			c.NextProtos = []string{"http/1.1"}
+
+	if result.UsedFallback {
+		if result.Watchable {
+			setupLog.Info("transient API error loading TLS settings; " +
+				"using Intermediate defaults and waiting for watcher recovery")
+		} else {
+			setupLog.Info("APIServer TLS API unavailable; using Intermediate defaults")
+		}
+	}
+
+	profile := result.Spec
+	if !tlspkg.ShouldHonorClusterTLSProfile(result.AdherencePolicy) {
+		// Non-adhering policy: use hardened Intermediate defaults (TLS 1.2 + ECDHE AEAD).
+		profile = *configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+	}
+
+	tlsConfigFn, unsupported := tlspkg.ConfigFromProfile(profile)
+	if len(unsupported) > 0 {
+		setupLog.Info("some TLS settings from profile are not supported by Go", "unsupported", unsupported)
+	}
+
+	// Keep the legacy --enable-http2=false semantics: HTTP/2 stays disabled by
+	// default (rapid reset CVEs), overriding the profile's ALPN.
+	nextProtos := commonTLS.SetNextProtos(commonTLS.HTTP2NextProtos...)
+	if !enableHTTP2 {
+		setupLog.Info("Disabling HTTP/2")
+		nextProtos = commonTLS.SetNextProtos(commonTLS.HTTP1NextProtos...)
+	}
+
+	return []func(*tls.Config){tlsConfigFn, nextProtos}, result, nil
+}
+
+// registerTLSProfileWatcher cancels the returned context when the cluster TLS
+// profile or adherence policy changes, so the pod restarts with fresh settings.
+func registerTLSProfileWatcher(ctx context.Context, mgr ctrl.Manager, load tlspkg.LoadResult) context.Context {
+	watcherCtx, cancel := context.WithCancel(ctx)
+
+	watcher := newTLSProfileWatcher(mgr.GetClient(), load, cancel)
+	if err := watcher.SetupWithManager(mgr); err != nil {
+		cancel()
+		setupLog.Error(err, "Failed to register TLS security profile watcher")
+		os.Exit(1)
+	}
+
+	return watcherCtx
+}
+
+// newTLSProfileWatcher builds the profile/adherence watcher seeded with the
+// bootstrap result; any observed change triggers a graceful-shutdown reload.
+func newTLSProfileWatcher(
+	cli client.Client, load tlspkg.LoadResult, cancel context.CancelFunc,
+) *tlspkg.SecurityProfileWatcher {
+	return &tlspkg.SecurityProfileWatcher{
+		Client:                    cli,
+		InitialTLSProfileSpec:     load.Spec,
+		InitialTLSAdherencePolicy: load.AdherencePolicy,
+		OnProfileChange: func(_ context.Context, _, _ configv1.TLSProfileSpec) {
+			setupLog.Info("TLS profile changed, initiating graceful shutdown to reload")
+			cancel()
+		},
+		OnAdherencePolicyChange: func(_ context.Context, _, _ configv1.TLSAdherencePolicy) {
+			setupLog.Info("TLS adherence policy changed, initiating graceful shutdown to reload")
+			cancel()
 		},
 	}
 }
@@ -144,10 +220,8 @@ func setupMetricsOptions(cfg managerConfig, tlsOpts []func(*tls.Config)) metrics
 	return opts
 }
 
-func setupManager(cfg managerConfig) ctrl.Manager {
-	tlsOpts := tlsOptions(cfg.enableHTTP2)
-
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+func setupManager(cfg managerConfig, restCfg *rest.Config, tlsOpts []func(*tls.Config)) ctrl.Manager {
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                setupMetricsOptions(cfg, tlsOpts),
 		WebhookServer:          setupWebhookServer(cfg, tlsOpts),
@@ -194,9 +268,39 @@ func registerHealthChecks(mgr ctrl.Manager) {
 func main() {
 	cfg := parseFlags()
 	ctx := ctrl.SetupSignalHandler()
-	mgr := setupManager(cfg)
+
+	restCfg := ctrl.GetConfigOrDie()
+	// Bound every bootstrap request, including the REST mapper's discovery
+	// calls, which the load context does not cover.
+	bootstrapCfg := rest.CopyConfig(restCfg)
+	bootstrapCfg.Timeout = 10 * time.Second
+	bootstrapClient, err := client.New(bootstrapCfg, client.Options{Scheme: scheme})
+	if err != nil {
+		// Refuse to start: the TLS posture cannot be determined and the same
+		// rest.Config would fail manager construction anyway.
+		setupLog.Error(err, "Failed to create bootstrap client for TLS profile")
+		os.Exit(1)
+	}
+
+	// Bound the bootstrap TLS read like the other TLS-family operators
+	// (10s): a deadline is transient-classified, so a nonresponding API
+	// server falls back to Intermediate with watcher recovery instead of
+	// hanging startup before the manager's probes exist.
+	loadCtx, loadCancel := context.WithTimeout(ctx, 10*time.Second)
+	tlsOpts, tlsLoad, err := managerTLSOptions(loadCtx, bootstrapClient, cfg.enableHTTP2)
+	loadCancel()
+	if err != nil {
+		setupLog.Error(err, "Failed to establish manager TLS configuration")
+		os.Exit(1)
+	}
+
+	mgr := setupManager(cfg, restCfg, tlsOpts)
 	registerControllers(ctx, mgr)
 	registerHealthChecks(mgr)
+
+	if tlsLoad.Watchable {
+		ctx = registerTLSProfileWatcher(ctx, mgr, tlsLoad)
+	}
 
 	setupLog.Info("Starting manager")
 	if err := mgr.Start(ctx); err != nil {
