@@ -102,8 +102,10 @@ func SetupWithManager(ctx context.Context, mgr ctrl.Manager, manifestsBasePath s
 		// negative-polarity status (False means healthy) so it must not be
 		// listed here — otherwise Ready stays False while the module is fine.
 		WithConditions(
-			string(common.ConditionTypeProvisioningSucceeded),
-			constants.ConditionDeploymentsAvailable,
+			reconciler.DependentConditions(
+				frameworkapi.ConditionTypeProvisioningSucceeded,
+				constants.ConditionDeploymentsAvailable,
+			)...,
 		).
 		WithDynamicOwnership().
 		Watches(

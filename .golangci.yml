@@ -28,6 +28,13 @@ linters:
       logcheck:
         type: "module"
         description: Checks Go logging calls for Kubernetes logging conventions.
+    # goconst's library started counting composite-literal strings in the version
+    # bundled with golangci-lint v2.13+; excluded (alongside the default call
+    # exclusion, which exclude-types replaces) to preserve the previous scope.
+    goconst:
+      exclude-types:
+        - Call
+        - CompositeLit
     revive:
       rules:
         - name: comment-spacings
