@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/actions"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/conditions"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/types"
@@ -35,7 +35,7 @@ import (
 func releasesAction(basePath string) actions.Fn {
 	return func(_ context.Context, rr *types.ReconciliationRequest) error {
 		ray := rr.Instance.(*componentsv1alpha1.Ray)
-		ray.SetReleaseStatus(common.ComponentReleaseStatus{
+		ray.SetReleaseStatus(fwapi.ComponentReleaseStatus{
 			Releases: desiredModuleReleases(resolveKubeRayVersion(basePath)),
 		})
 
@@ -95,12 +95,12 @@ func defaultKubeRayImage(basePath string) string {
 	return params[constants.KubeRayImageParam]
 }
 
-func desiredModuleReleases(kubeRayVersion string) []common.ComponentRelease {
+func desiredModuleReleases(kubeRayVersion string) []fwapi.ComponentRelease {
 	if kubeRayVersion == "" {
 		return nil
 	}
 
-	return []common.ComponentRelease{{
+	return []fwapi.ComponentRelease{{
 		Name:    constants.KubeRayReleaseName,
 		Version: kubeRayVersion,
 		RepoURL: constants.KubeRayRepoURL,

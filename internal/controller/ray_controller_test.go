@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
+	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/actions/gc"
 	componentsv1alpha1 "github.com/opendatahub-io/ray-module-operator/api/v1alpha1"
 	"github.com/opendatahub-io/ray-module-operator/internal/constants"
@@ -258,7 +259,7 @@ var _ = Describe("Ray Controller", Ordered, func() {
 
 				found := false
 				for _, c := range ray.Status.Conditions {
-					if c.Type == string(common.ConditionTypeReady) {
+					if c.Type == string(fwapi.ConditionTypeReady) {
 						g.Expect(string(c.Status)).To(Equal("True"))
 						found = true
 						break
