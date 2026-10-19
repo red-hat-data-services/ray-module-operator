@@ -315,6 +315,7 @@ rules:
     resources:
       - configmaps
       - events
+      - persistentvolumeclaims
       - serviceaccounts
       - services
     verbs:
