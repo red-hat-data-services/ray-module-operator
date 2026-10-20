@@ -52,7 +52,7 @@ import (
 // RBAC for operand resources deployed by the reconciler.
 //
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=services;configmaps;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services;configmaps;serviceaccounts;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // Cluster-scoped Ray CRs record events in namespace "default". Operand
 // kuberay-operator ClusterRole also lists events; privilege-escalation
