@@ -217,7 +217,7 @@ var _ = Describe("Ray Controller", Ordered, func() {
 
 				g.Expect(ray.Status.Releases).To(HaveLen(1))
 				g.Expect(ray.Status.Releases[0].Name).To(Equal(constants.KubeRayReleaseName))
-				g.Expect(ray.Status.Releases[0].Version).To(Equal("v1.6.2"))
+				g.Expect(ray.Status.Releases[0].Version).To(Equal("v1.7.1"))
 				g.Expect(ray.Status.Releases[0].RepoURL).To(Equal(constants.KubeRayRepoURL))
 			}, timeout, interval).Should(Succeed())
 
