@@ -271,8 +271,8 @@ func TestReadPlatformDistributionDefaultsName(t *testing.T) {
 func TestStandaloneDistribution(t *testing.T) {
 	t.Parallel()
 
-	got := standaloneDistribution("v1.6.2")
-	if got.Name != constants.StandaloneDistributionName || got.Version != "v1.6.2" {
+	got := standaloneDistribution("v1.7.1")
+	if got.Name != constants.StandaloneDistributionName || got.Version != "v1.7.1" {
 		t.Fatalf("standaloneDistribution = %#v", got)
 	}
 
@@ -321,10 +321,10 @@ func TestKubeRayVersionFromImage(t *testing.T) {
 		image string
 		want  string
 	}{
-		{image: "quay.io/opendatahub/kuberay-operator:v1.6.2", want: "v1.6.2"},
+		{image: "quay.io/opendatahub/kuberay-operator:v1.7.1", want: "v1.7.1"},
 		{image: "registry.redhat.io/kuberay:v2.0", want: "v2.0"},
 		{image: "quay.io/opendatahub/kuberay-operator@sha256:abc", want: ""},
-		{image: "quay.io/opendatahub/kuberay-operator:v1.6.2@sha256:abc", want: "v1.6.2"},
+		{image: "quay.io/opendatahub/kuberay-operator:v1.7.1@sha256:abc", want: "v1.7.1"},
 		{image: "", want: ""},
 	}
 
@@ -352,7 +352,7 @@ func TestResolveKubeRayImageFallsBackToParams(t *testing.T) {
 	t.Setenv("RELATED_IMAGE_ODH_KUBERAY_OPERATOR_CONTROLLER_IMAGE", "")
 
 	got := resolveKubeRayImage(testManifestsPath)
-	if got != "quay.io/opendatahub/kuberay-operator:v1.6.2" {
+	if got != "quay.io/opendatahub/kuberay-operator:v1.7.1" {
 		t.Fatalf("resolveKubeRayImage = %q, want params.env default", got)
 	}
 }
@@ -362,8 +362,8 @@ func TestResolveKubeRayVersionDigestOnlyFallback(t *testing.T) {
 		"registry.redhat.io/rhoai/odh-kuberay-operator-controller-rhel9@sha256:abc123")
 
 	got := resolveKubeRayVersion(testManifestsPath)
-	if got != "v1.6.2" {
-		t.Fatalf("resolveKubeRayVersion = %q, want v1.6.2 from params.env fallback", got)
+	if got != "v1.7.1" {
+		t.Fatalf("resolveKubeRayVersion = %q, want v1.7.1 from params.env fallback", got)
 	}
 }
 
