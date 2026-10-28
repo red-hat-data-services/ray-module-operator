@@ -136,7 +136,10 @@ func managerTLSOptions(
 		profile = *configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
 	}
 
-	tlsConfigFn, unsupported := tlspkg.ConfigFromProfile(profile)
+	tlsConfigFn, unsupported, err := tlspkg.ConfigFromProfileWithError(profile)
+	if err != nil {
+		return nil, result, fmt.Errorf("building TLS options from profile: %w", err)
+	}
 	if len(unsupported) > 0 {
 		setupLog.Info("some TLS settings from profile are not supported by Go", "unsupported", unsupported)
 	}
