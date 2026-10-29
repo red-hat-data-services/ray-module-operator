@@ -1,0 +1,192 @@
+name: Update KubeRay
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-kuberay
+  cancel-in-progress: true
+
+jobs:
+  update:
+    name: Refresh KubeRay manifests and fallbacks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require a branch ref
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          [[ "$WORKFLOW_REF" == refs/heads/* ]] || {
+            echo "Update KubeRay must run from a branch ref, got: $WORKFLOW_REF" >&2
+            exit 1
+          }
+
+      - name: Check out the selected branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          # A manual run must operate on the branch selected in the fork, not
+          # silently fall back to the repository default branch.
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Capture starting KubeRay version
+        id: previous
+        run: |
+          set -euo pipefail
+
+          version="$(sed -nE 's/^  kuberayOperator: .*:v([0-9]+(\.[0-9]+)*)$/\1/p' \
+            charts/ray-module-operator/values.yaml | head -n 1)"
+          [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ ]] || {
+            echo "Could not determine the starting KubeRay version from the checked-out branch." >&2
+            exit 1
+          }
+
+          echo "Starting KubeRay version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve KubeRay commits
+        run: |
+          set -euo pipefail
+
+          odh_sha="$(git ls-remote https://github.com/opendatahub-io/kuberay.git refs/heads/dev | awk '{print $1}')"
+          rhoai_sha="$(git ls-remote https://github.com/red-hat-data-services/kuberay.git refs/heads/main | awk '{print $1}')"
+
+          [[ "$odh_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid ODH SHA: $odh_sha" >&2; exit 1; }
+          [[ "$rhoai_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid RHOAI SHA: $rhoai_sha" >&2; exit 1; }
+
+          sed -i "s#ref: dev@.*#ref: dev@$odh_sha#" hack/manifests-sources.yaml
+          sed -i "s#ref: main@.*#ref: main@$rhoai_sha#" hack/manifests-sources.yaml
+          sed -i "s#opendatahub-io:kuberay:dev@[^:]*:#opendatahub-io:kuberay:dev@$odh_sha:#" hack/scripts/get-manifests.sh
+          sed -i "s#red-hat-data-services:kuberay:main@[^:]*:#red-hat-data-services:kuberay:main@$rhoai_sha:#" hack/scripts/get-manifests.sh
+
+      - name: Refresh committed KubeRay snapshots
+        run: make update-manifests
+
+      - name: Update fallback images and version-sensitive tests
+        run: |
+          set -euo pipefail
+
+          odh_version="$(sed -n 's/^    version: //p' opt/manifests/odh/kuberay/component_metadata.yaml | head -n 1)"
+          rhoai_version="$(sed -n 's/^    version: //p' opt/manifests/rhoai/kuberay/component_metadata.yaml | head -n 1)"
+          [[ -n "$odh_version" && "$odh_version" == "$rhoai_version" ]] || {
+            echo "Snapshot versions differ or are missing: ODH=$odh_version RHOAI=$rhoai_version" >&2
+            exit 1
+          }
+
+          image_version="$odh_version"
+          image="quay.io/opendatahub/kuberay-operator:v$odh_version"
+          export image image_version
+
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+
+          image = os.environ["image"]
+          version = os.environ["image_version"]
+
+          replacements = {
+              "config/openshift/params.env": (
+                  r"(odh-kuberay-operator-controller-image=)[^\n]+",
+                  rf"\g<1>{image}",
+              ),
+              "internal/controller/testdata/manifests/kuberay/openshift/params.env": (
+                  r"(odh-kuberay-operator-controller-image=)[^\n]+",
+                  rf"\g<1>{image}",
+              ),
+              "charts/ray-module-operator/values.yaml": (
+                  r"(  kuberayOperator: )[^\n]+",
+                  rf"\g<1>{image}",
+              ),
+              "test/e2e/e2e_suite_test.go": (
+                  r"(relatedImages\.kuberayOperator=)[^\"]+",
+                  rf"\g<1>{image}",
+              ),
+          }
+
+          for filename, (pattern, replacement) in replacements.items():
+              path = Path(filename)
+              text = path.read_text()
+              updated, count = re.subn(pattern, replacement, text)
+              if count != 1:
+                  raise SystemExit(f"expected one replacement in {filename}, got {count}")
+              path.write_text(updated)
+
+          path = Path("internal/controller/configmap_test.go")
+          text = path.read_text()
+          text = re.sub(r"quay\.io/opendatahub/kuberay-operator:v[0-9.]+", image, text)
+          text = re.sub(
+              r'(image: "quay\.io/opendatahub/kuberay-operator:v[0-9.]+(?:@sha256:[^"]+)?", want: ")v[0-9.]+(")',
+              rf"\g<1>v{version}\g<2>",
+              text,
+          )
+          text, count = re.subn(
+              r"want v[0-9.]+ from params\.env fallback",
+              f"want v{version} from params.env fallback",
+              text,
+          )
+          if count != 1:
+              raise SystemExit(f"expected one fallback failure-message replacement, got {count}")
+
+          text, count = re.subn(
+              r'(func TestResolveKubeRayVersionDigestOnlyFallback\(.*?if got != ")v[0-9.]+(")',
+              rf"\g<1>v{version}\g<2>",
+              text,
+              flags=re.DOTALL,
+          )
+          if count != 1:
+              raise SystemExit(f"expected one digest-only fallback assertion replacement, got {count}")
+          path.write_text(text)
+
+          path = Path("internal/controller/ray_controller_test.go")
+          text = re.sub(
+              r'Version\)\.To\(Equal\("v[0-9.]+"\)\)',
+              f'Version).To(Equal("v{version}"))',
+              path.read_text(),
+          )
+          path.write_text(text)
+          PY
+
+      - name: Verify no stale KubeRay fallback remains
+        env:
+          STARTING_VERSION: ${{ steps.previous.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$STARTING_VERSION" == "$(sed -n 's/^    version: //p' opt/manifests/odh/kuberay/component_metadata.yaml | head -n 1)" ]]; then
+            echo "KubeRay version did not change; no stale fallback check is needed."
+            exit 0
+          fi
+
+          escaped_version="${STARTING_VERSION//./\\.}"
+          if rg -n \
+              "kuberay-operator:v${escaped_version}([^0-9.]|$)|kuberayOperator=.*v${escaped_version}([^0-9.]|$)|kuberayOperator: .*v${escaped_version}([^0-9.]|$)" \
+              config charts test internal opt/manifests; then
+            echo "Found a stale KubeRay v${STARTING_VERSION} fallback reference" >&2
+            exit 1
+          fi
+
+      - name: Create or update pull request
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        with:
+          branch: automation/update-kuberay-${{ github.ref_name }}
+          base: ${{ github.ref_name }}
+          delete-branch: true
+          commit-message: "chore: update KubeRay manifests and fallbacks"
+          title: "chore: update KubeRay manifests and fallbacks"
+          body: |
+            Updates the pinned KubeRay manifest snapshots and synchronizes:
+
+            - standalone Kustomize and Helm fallback images
+            - E2E installation overrides
+            - version-sensitive controller tests
+            - manifest provenance SHAs
+
+            The image tag is derived from the refreshed snapshot metadata.
