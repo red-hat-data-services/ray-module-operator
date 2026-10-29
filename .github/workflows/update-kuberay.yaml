@@ -2,39 +2,83 @@ name: Update KubeRay
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: write
-  pull-requests: write
-
-concurrency:
-  group: update-kuberay
-  cancel-in-progress: true
+  repository_dispatch:
+    types:
+      - kuberay-downstream-update
 
 jobs:
-  update:
-    name: Refresh KubeRay manifests and fallbacks
+  validate:
+    name: Validate update request
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      base_branch: ${{ steps.context.outputs.base_branch }}
+      source_sha: ${{ steps.context.outputs.source_sha }}
     steps:
-      - name: Require a branch ref
+      - name: Resolve update context
+        id: context
         env:
+          EVENT_NAME: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_REF_NAME: ${{ github.ref_name }}
+          DISPATCH_BASE_BRANCH: ${{ github.event.client_payload.base_branch }}
+          DISPATCH_SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          TRUSTED_DISPATCH_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
 
-          [[ "$WORKFLOW_REF" == refs/heads/* ]] || {
-            echo "Update KubeRay must run from a branch ref, got: $WORKFLOW_REF" >&2
+          if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+            base_branch="$DISPATCH_BASE_BRANCH"
+            source_sha="$DISPATCH_SOURCE_SHA"
+
+            [[ -n "$base_branch" ]] || {
+              echo "repository_dispatch payload is missing base_branch" >&2
+              exit 1
+            }
+            [[ "$base_branch" == "$TRUSTED_DISPATCH_BRANCH" ]] || {
+              echo "repository_dispatch is only allowed for the trusted default branch: $TRUSTED_DISPATCH_BRANCH" >&2
+              exit 1
+            }
+            [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "repository_dispatch payload has an invalid source_sha" >&2
+              exit 1
+            }
+          else
+            [[ "$WORKFLOW_REF" == refs/heads/* ]] || {
+              echo "Update KubeRay must run from a branch ref, got: $WORKFLOW_REF" >&2
+              exit 1
+            }
+            base_branch="$WORKFLOW_REF_NAME"
+            source_sha=""
+          fi
+
+          git check-ref-format --branch "$base_branch" >/dev/null || {
+            echo "Invalid base_branch: $base_branch" >&2
             exit 1
           }
 
+          echo "base_branch=$base_branch" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+  update:
+    needs: validate
+    name: Refresh KubeRay manifests and fallbacks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: update-kuberay-${{ needs.validate.outputs.base_branch }}
+      cancel-in-progress: true
+    steps:
       - name: Check out the selected branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
-          # A manual run must operate on the branch selected in the fork, not
-          # silently fall back to the repository default branch.
-          ref: ${{ github.ref }}
+          ref: ${{ needs.validate.outputs.base_branch }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Capture starting KubeRay version
         id: previous
@@ -52,6 +96,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Resolve KubeRay commits
+        id: resolve
         run: |
           set -euo pipefail
 
@@ -60,6 +105,9 @@ jobs:
 
           [[ "$odh_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid ODH SHA: $odh_sha" >&2; exit 1; }
           [[ "$rhoai_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid RHOAI SHA: $rhoai_sha" >&2; exit 1; }
+
+          echo "odh_sha=$odh_sha" >> "$GITHUB_OUTPUT"
+          echo "rhoai_sha=$rhoai_sha" >> "$GITHUB_OUTPUT"
 
           sed -i "s#ref: dev@.*#ref: dev@$odh_sha#" hack/manifests-sources.yaml
           sed -i "s#ref: main@.*#ref: main@$rhoai_sha#" hack/manifests-sources.yaml
@@ -171,13 +219,19 @@ jobs:
               config charts test internal opt/manifests; then
             echo "Found a stale KubeRay v${STARTING_VERSION} fallback reference" >&2
             exit 1
+          else
+            scan_status=$?
+            if [[ "$scan_status" -ne 1 ]]; then
+              echo "Stale-reference scan failed with rg exit code $scan_status" >&2
+              exit "$scan_status"
+            fi
           fi
 
       - name: Create or update pull request
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         with:
-          branch: automation/update-kuberay-${{ github.ref_name }}
-          base: ${{ github.ref_name }}
+          branch: automation/update-kuberay-${{ needs.validate.outputs.base_branch }}
+          base: ${{ needs.validate.outputs.base_branch }}
           delete-branch: true
           commit-message: "chore: update KubeRay manifests and fallbacks"
           title: "chore: update KubeRay manifests and fallbacks"
@@ -190,3 +244,6 @@ jobs:
             - manifest provenance SHAs
 
             The image tag is derived from the refreshed snapshot metadata.
+            Triggering KubeRay commit: `${{ needs.validate.outputs.source_sha || 'manual dispatch' }}`
+            Resolved ODH KubeRay snapshot: `${{ steps.resolve.outputs.odh_sha }}`
+            Resolved RHOAI KubeRay snapshot: `${{ steps.resolve.outputs.rhoai_sha }}`
