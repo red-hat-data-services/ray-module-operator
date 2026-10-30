@@ -88,6 +88,12 @@ func forbiddenError() error {
 
 const http1Proto = "http/1.1"
 
+func TestManagerSchemeRegistersAPIServer(t *testing.T) {
+	if !scheme.Recognizes(configv1.GroupVersion.WithKind("APIServer")) {
+		t.Fatal("manager scheme does not register configv1.APIServer")
+	}
+}
+
 func TestManagerTLSOptions(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -159,18 +165,60 @@ func TestManagerTLSOptions(t *testing.T) {
 			wantWatchable: true,
 		},
 		{
-			name: "strict custom profile with only unsupported ciphers fails closed",
+			name: "strict custom profile with all unusable ciphers fails closed",
 			profile: &configv1.TLSSecurityProfile{
 				Type: configv1.TLSProfileCustomType,
 				Custom: &configv1.CustomTLSProfile{
 					TLSProfileSpec: configv1.TLSProfileSpec{
 						MinTLSVersion: configv1.VersionTLS12,
-						Ciphers:       []string{"DHE-RSA-AES128-GCM-SHA256", "DHE-RSA-AES256-GCM-SHA384"},
+						Ciphers:       []string{"DHE-RSA-AES128-GCM-SHA256", "TLS_AES_128_GCM_SHA256"},
 					},
 				},
 			},
 			adherence: configv1.TLSAdherencePolicyStrictAllComponents,
 			wantErr:   true,
+		},
+		{
+			name: "strict custom profile honors TLS 1.0 minimum",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						MinTLSVersion: configv1.VersionTLS10,
+						Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
+					},
+				},
+			},
+			adherence:     configv1.TLSAdherencePolicyStrictAllComponents,
+			wantMin:       tls.VersionTLS10,
+			wantCiphers:   true,
+			wantProtos:    []string{http1Proto},
+			wantWatchable: true,
+		},
+		{
+			name: "strict custom profile without a spec fails closed",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+			},
+			adherence: configv1.TLSAdherencePolicyStrictAllComponents,
+			wantErr:   true,
+		},
+		{
+			name: "strict unknown profile type fails closed",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileType("FutureProfile"),
+			},
+			adherence: configv1.TLSAdherencePolicyStrictAllComponents,
+			wantErr:   true,
+		},
+		{
+			name:          "non-strict unknown profile uses intermediate defaults",
+			profile:       &configv1.TLSSecurityProfile{Type: configv1.TLSProfileType("FutureProfile")},
+			adherence:     configv1.TLSAdherencePolicyNoOpinion,
+			wantMin:       tls.VersionTLS12,
+			wantCiphers:   true,
+			wantProtos:    []string{http1Proto},
+			wantWatchable: true,
 		},
 		{
 			name:          "nil profile with strict adherence uses intermediate",
@@ -233,6 +281,11 @@ func TestManagerTLSOptions(t *testing.T) {
 			wantWatchable: false,
 		},
 		{
+			name:    "unregistered config API scheme fails closed",
+			reader:  fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build(),
+			wantErr: true,
+		},
+		{
 			name:          "transient apiserver error falls back to intermediate with watcher",
 			reader:        errorReader{err: apierrors.NewServiceUnavailable("apiserver restarting")},
 			wantMin:       tls.VersionTLS12,
@@ -263,6 +316,9 @@ func TestManagerTLSOptions(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected an error")
+				}
+				if result.UsedFallback {
+					t.Fatal("unexpected fallback after an unregistered API type error")
 				}
 
 				return
@@ -379,7 +435,10 @@ func TestConfigFromProfileMapping(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tlsConfigFn, _ := tlspkg.ConfigFromProfile(tt.spec)
+			tlsConfigFn, _, err := tlspkg.ConfigFromProfileWithError(tt.spec)
+			if err != nil {
+				t.Fatalf("ConfigFromProfileWithError() error = %v", err)
+			}
 
 			cfg := &tls.Config{}
 			tlsConfigFn(cfg)
